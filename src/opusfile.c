@@ -328,7 +328,9 @@ static int op_get_prev_page_serial(OggOpusFile *_of,OpusSeekRecord *_sr,
   opus_int64     original_end;
   opus_int32     chunk_size;
   int            preferred_found;
-  original_end=end=begin=_offset;
+  original_end=_offset;
+  end=_offset;
+  begin=_offset;
   preferred_found=0;
   _offset=-1;
   chunk_size=OP_CHUNK_SIZE;
@@ -351,7 +353,8 @@ static int op_get_prev_page_serial(OggOpusFile *_of,OpusSeekRecord *_sr,
         We're not interested in the page itself... just the serial number, byte
          offset, page size, and granule position.*/
       _sr->search_start=search_start;
-      _sr->offset=_offset=llret;
+      _sr->offset=llret;
+      _offset=llret;
       _sr->serialno=serialno;
       OP_ASSERT(_of->offset-_offset>=0);
       OP_ASSERT(_of->offset-_offset<=OP_PAGE_SIZE_MAX);
@@ -417,7 +420,9 @@ static opus_int64 op_get_last_page(OggOpusFile *_of,ogg_int64_t *_gp,
   opus_int32  chunk_size;
   /*The target serial number must belong to the current link.*/
   OP_ASSERT(op_lookup_serialno(_serialno,_serialnos,_nserialnos));
-  original_end=end=begin=_offset;
+  begin=_offset;
+  end=_offset;
+  original_end=_offset;
   _offset=-1;
   /*We shouldn't have to initialize gp, but gcc is too dumb to figure out that
      ret>=0 implies we entered the if(page_gp!=-1) block at least once.*/
@@ -860,7 +865,8 @@ static int op_find_initial_pcm_offset(OggOpusFile *_of,
       _link->pcm_file_offset=0;
       /*Set pcm_end and end_offset so we can skip the call to
          op_find_final_pcm_offset().*/
-      _link->pcm_start=_link->pcm_end=0;
+      _link->pcm_start=0;
+      _link->pcm_end=0;
       _link->end_offset=_link->data_offset;
       return 0;
     }
@@ -870,7 +876,8 @@ static int op_find_initial_pcm_offset(OggOpusFile *_of,
       /*Set pcm_end and end_offset so we can skip the call to
          op_find_final_pcm_offset().*/
       _link->pcm_file_offset=0;
-      _link->pcm_start=_link->pcm_end=0;
+      _link->pcm_start=0;
+      _link->pcm_end=0;
       _link->end_offset=_link->data_offset;
       /*Tell the caller we've got a buffered page for them.*/
       return 1;
@@ -940,7 +947,8 @@ static int op_find_initial_pcm_offset(OggOpusFile *_of,
         /*If we trimmed the entire packet, stop (the spec says encoders
            shouldn't do this, but we support it anyway).*/
         if(OP_UNLIKELY(diff>durations[pi]))break;
-        _of->op[pi].granulepos=prev_packet_gp=cur_page_gp;
+        _of->op[pi].granulepos=cur_page_gp;
+        prev_packet_gp=cur_page_gp;
         /*Move the EOS flag to this packet, if necessary, so we'll trim the
            samples.*/
         _of->op[pi].e_o_s=1;
@@ -956,7 +964,8 @@ static int op_find_initial_pcm_offset(OggOpusFile *_of,
   _of->op_count=pi;
   _of->cur_discard_count=_link->head.pre_skip;
   _link->pcm_file_offset=0;
-  _of->prev_packet_gp=_link->pcm_start=pcm_start;
+  _of->prev_packet_gp=pcm_start;
+  _link->pcm_start=pcm_start;
   _of->prev_page_offset=page_offset;
   return 0;
 }
@@ -1397,7 +1406,8 @@ static int op_open_seekable2_impl(OggOpusFile *_of){
   int            ret;
   /*We can seek, so set out learning all about this file.*/
   (*_of->callbacks.seek)(_of->stream,0,SEEK_END);
-  _of->offset=_of->end=(*_of->callbacks.tell)(_of->stream);
+  _of->offset=(*_of->callbacks.tell)(_of->stream);
+  _of->end=(*_of->callbacks.tell)(_of->stream);
   if(OP_UNLIKELY(_of->end<0))return OP_EREAD;
   data_offset=_of->links[0].data_offset;
   if(OP_UNLIKELY(_of->end<data_offset))return OP_EBADLINK;
@@ -2287,10 +2297,13 @@ static int op_pcm_seek_page(OggOpusFile *_of,
   _of->bytes_tracked=0;
   _of->samples_tracked=0;
   link=_of->links+_li;
-  best_gp=pcm_start=link->pcm_start;
+  best_gp=link->pcm_start;
+  pcm_start=link->pcm_start;
   pcm_end=link->pcm_end;
   serialno=link->serialno;
-  best=best_start=begin=link->data_offset;
+  best=link->data_offset;
+  best_start=link->data_offset;
+  begin=link->data_offset;
   page_offset=-1;
   buffering=0;
   /*We discard the first 80 ms of data after a seek, so seek back that much
@@ -2303,9 +2316,12 @@ static int op_pcm_seek_page(OggOpusFile *_of,
   /*Special case seeking to the start of the link.*/
   pre_skip=link->head.pre_skip;
   OP_ALWAYS_TRUE(!op_granpos_add(&pcm_pre_skip,pcm_start,pre_skip));
-  if(op_granpos_cmp(_target_gp,pcm_pre_skip)<0)end=boundary=begin;
-  else{
-    end=boundary=link->end_offset;
+  if(op_granpos_cmp(_target_gp,pcm_pre_skip)<0){
+    end=begin;
+    boundary=begin;
+  }else{
+    end=link->end_offset;
+    boundary=link->end_offset;
 #if !defined(OP_SMALL_FOOTPRINT)
     /*If we were decoding from this link, we can narrow the range a bit.*/
     if(_li==_of->cur_link&&_of->ready_state>=OP_INITSET){
@@ -2340,8 +2356,10 @@ static int op_pcm_seek_page(OggOpusFile *_of,
              first seek location gives better results, on average.*/
           if(diff<0){
             if(offset-begin>=end-begin>>1||diff>-OP_CUR_TIME_THRESH){
-              best=begin=offset;
-              best_gp=pcm_start=gp;
+              best=offset;
+              begin=offset;
+              best_gp=gp;
+              pcm_start=gp;
               /*If we have buffered data from a continued packet, remember the
                  offset of the previous page's start, so that if we do wind up
                  having to seek back here later, we can prime the stream with
@@ -2391,7 +2409,8 @@ static int op_pcm_seek_page(OggOpusFile *_of,
               Check if we can cut off at least half the range, though.*/
             if(offset-begin<=end-begin>>1||diff<OP_CUR_TIME_THRESH){
               /*We really want the page start here, but this will do.*/
-              end=boundary=offset;
+              end=offset;
+              boundary=offset;
               pcm_end=gp;
             }
           }
@@ -2408,7 +2427,9 @@ static int op_pcm_seek_page(OggOpusFile *_of,
   _of->cur_link=_li;
   _of->ready_state=OP_STREAMSET;
   /*Initialize the interval size history.*/
-  d2=d1=d0=end-begin;
+  d0=end-begin;
+  d1=d0;
+  d2=d0;
   force_bisect=0;
   while(begin<end){
     opus_int64 bisect;
@@ -2512,7 +2533,8 @@ static int op_pcm_seek_page(OggOpusFile *_of,
           }
           /*Save the byte offset of the end of the page with this granule
              position.*/
-          best=best_start=begin;
+          best=begin;
+          best_start=begin;
           /*Buffer any data from a continued packet, if necessary.
             This avoids the need to seek back here if the next timestamp we
              encounter while scanning forward lies after our target.*/
@@ -2528,7 +2550,8 @@ static int op_pcm_seek_page(OggOpusFile *_of,
           /*Then force buffering on, so that if a packet starts (but does not
              end) on the next page, we still avoid the extra seek back.*/
           buffering=1;
-          best_gp=pcm_start=gp;
+          best_gp=gp;
+          pcm_start=gp;
           OP_ALWAYS_TRUE(!op_granpos_diff(&diff,_target_gp,pcm_start));
           /*If we're more than a second away from our target, break out and
              do another bisection.*/
